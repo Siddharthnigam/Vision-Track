@@ -1,0 +1,30 @@
+# Node / Vite
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Secrets - NEVER commit
+backend/.env
+.env
+.env.*
+
+# Databases
+*.db
+*.db-wal
+*.db-shm
+
+# Runtime / editor
+*.pid
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Test temp DB
+tmp_test.db
+backend/.tmp_test.db

@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-obsidian text-zinc-300 antialiased;
+    background-image:
+      radial-gradient(ellipse 55% 40% at 75% -10%, rgba(239, 68, 68, 0.06), transparent),
+      radial-gradient(ellipse 45% 35% at 5% 110%, rgba(220, 38, 38, 0.05), transparent);
+    background-attachment: fixed;
+  }
+
+  ::selection {
+    background: rgba(239, 68, 68, 0.35);
+    color: #fff;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0d0d0e;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1f1f23;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(239, 68, 68, 0.45);
+  }
+}
+
+@layer components {
+  .vos-card {
+    @apply rounded-2xl border border-edge bg-surface shadow-glow-inner;
+  }
+
+  .vos-glow-text {
+    text-shadow: 0 0 12px rgba(239, 68, 68, 0.6);
+  }
+
+  .vos-btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-neon to-crimson
+      px-4 py-2 text-sm font-semibold text-white transition-all duration-200
+      hover:shadow-glow-lg hover:brightness-110 active:scale-[0.98]
+      disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:shadow-none;
+  }
+
+  .vos-btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-edge bg-transparent
+      px-4 py-2 text-sm font-medium text-zinc-400 transition-all duration-200
+      hover:border-neon/40 hover:text-neon hover:shadow-glow-sm active:scale-[0.98]
+      disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .vos-input {
+    @apply w-full rounded-lg border border-edge bg-obsidian px-3 py-2 text-sm text-zinc-200
+      placeholder-zinc-600 outline-none transition-colors duration-200
+      focus:border-neon/60 focus:shadow-glow-sm;
+  }
+
+  .vos-label {
+    @apply mb-1.5 block text-[11px] font-semibold uppercase tracking-widest text-zinc-500;
+  }
+
+  .vos-badge {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-neon/30 bg-neon/10
+      px-2.5 py-0.5 text-[11px] font-medium text-neon;
+  }
+}
+
+@layer utilities {
+  .glossy {
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0) 45%);
+  }
+}
