@@ -2,9 +2,9 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from . import config
@@ -16,6 +16,7 @@ from .models import (
     Lead,
     Metric,
     Project,
+    SalesImport,
     SocialPost,
     Task,
     User,
@@ -29,6 +30,7 @@ from .schemas import (
     DocCreate,
     DocOut,
     FinanceSummary,
+    ImportedLead,
     LoginRequest,
     LeadCreate,
     LeadOut,
@@ -40,6 +42,9 @@ from .schemas import (
     ProjectCreate,
     ProjectOut,
     ProjectUpdate,
+    SalesImportAccept,
+    SalesImportOut,
+    SalesImportPreview,
     SocialPostCreate,
     SocialPostOut,
     SocialPostUpdate,
@@ -52,12 +57,14 @@ from .schemas import (
     UserUpdate,
     UserWithDept,
 )
-from .services import ai_scheduler, security
+from .services import ai_scheduler, sales_import, security
 
 
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    _migrate_leads_schema()
+    _backfill_lead_fields()
     try:
         from scripts.seed import run as seed_demo
 
@@ -84,6 +91,68 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------- helpers
+
+
+def _migrate_leads_schema() -> None:
+    """SQLite: create_all won't add columns to an existing table, so add them."""
+    if not config.settings.is_sqlite:
+        return
+    db = SessionLocal()
+    try:
+        cols = {
+            row[1]
+            for row in db.execute(text("SELECT * FROM pragma_table_info('leads')")).fetchall()
+        }
+        for col, ddl in {
+            "phone": "VARCHAR(40)",
+            "category": "VARCHAR(120)",
+            "address": "TEXT",
+            "website": "VARCHAR(255)",
+        }.items():
+            if col not in cols:
+                db.execute(text(f"ALTER TABLE leads ADD COLUMN {col} {ddl}"))
+        db.commit()
+    finally:
+        db.close()
+
+
+def _backfill_lead_fields() -> None:
+    """Split old combined stage_note (Category · Address · Phone · Website) into fields."""
+    db = SessionLocal()
+    try:
+        leads = db.execute(select(Lead)).scalars().all()
+        changed = False
+        for lead in leads:
+            if lead.phone or lead.category or lead.address or lead.website:
+                continue
+            note = lead.stage_note or ""
+            cleaned = []
+            address_parts: list[str] = []
+            for part in note.split(" · "):
+                part = part.strip()
+                if not part:
+                    continue
+                if part.startswith("Category: ") and not lead.category:
+                    lead.category = part[len("Category: "):]
+                elif part.startswith("Phone: ") and not lead.phone:
+                    lead.phone = part[len("Phone: "):]
+                elif part.startswith("Website: ") and not lead.website:
+                    lead.website = part[len("Website: "):]
+                elif part.startswith("Email: ") and not lead.email:
+                    lead.email = part[len("Email: "):]
+                elif part.startswith(("Category:", "Phone:", "Website:", "Email:")):
+                    cleaned.append(part)
+                else:
+                    address_parts.append(part)
+            if address_parts:
+                lead.address = " · ".join(address_parts) or None
+            if lead.category or lead.phone or lead.website or lead.address or lead.email:
+                lead.stage_note = " · ".join(cleaned) or None
+                changed = True
+        if changed:
+            db.commit()
+    finally:
+        db.close()
 
 
 def _task(t: Task) -> TaskWithNames:
@@ -646,6 +715,8 @@ async def suggest_for_project(
 @app.get("/api/leads", response_model=list[LeadOutWithOwner])
 def list_leads(
     status: Optional[str] = None,
+    q: Optional[str] = None,
+    mine: bool = False,
     user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -653,6 +724,18 @@ def list_leads(
     stmt = select(Lead)
     if status:
         stmt = stmt.where(Lead.status == status)
+    if mine:
+        stmt = stmt.where(Lead.owner_id == user.id)
+    if q:
+        term = f"%{q.strip()}%"
+        stmt = stmt.where(
+            Lead.company.ilike(term)
+            | Lead.contact.ilike(term)
+            | Lead.phone.ilike(term)
+            | Lead.category.ilike(term)
+            | Lead.address.ilike(term)
+            | Lead.website.ilike(term)
+        )
     leads = db.execute(stmt.order_by(Lead.created_at.desc())).scalars().all()
     return [_lead(l) for l in leads]
 
@@ -689,6 +772,21 @@ def update_lead(
     db.commit()
     db.refresh(lead)
     return lead
+
+
+@app.delete("/api/leads/{lead_id}")
+def delete_lead(
+    lead_id: int,
+    user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    _guard_scope(user, "sales")
+    lead = db.get(Lead, lead_id)
+    if lead is None:
+        raise HTTPException(status_code=404, detail="Lead not found.")
+    db.delete(lead)
+    db.commit()
+    return {"ok": True, "id": lead_id}
 
 
 @app.post("/api/leads/{lead_id}/sign", response_model=LeadSignResult)
@@ -767,6 +865,143 @@ async def sign_lead(
         created_tasks=[_task(t) for t in created],
         notes=notes,
     )
+
+
+# --------------------------------------------------------------- sales import
+
+
+def _sales_dept_id(db: Session) -> int:
+    return _find_dept_id(db, "sales")
+
+
+def _preview(db: Session, imp: SalesImport, leads: list[dict], skipped: int) -> SalesImportPreview:
+    imp.row_count = len(leads)
+    db.add(imp)
+    db.commit()
+    db.refresh(imp)
+    return SalesImportPreview(
+        source=SalesImportOut.model_validate(imp),
+        leads=[ImportedLead(**l) for l in leads],
+        skipped=skipped,
+    )
+
+
+@app.get("/api/sales/imports", response_model=list[SalesImportOut])
+def list_sales_imports(
+    user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    _guard_scope(user, "sales")
+    imports = (
+        db.execute(select(SalesImport).order_by(SalesImport.created_at.desc()).limit(50))
+        .scalars()
+        .all()
+    )
+    return [SalesImportOut.model_validate(i) for i in imports]
+
+
+@app.post("/api/sales/imports/file", response_model=SalesImportPreview)
+def import_sales_file(
+    file: UploadFile = File(...),
+    user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    _guard_scope(user, "sales")
+    data = file.file.read()
+    if not data:
+        raise HTTPException(status_code=422, detail="Empty file.")
+    leads, skipped = sales_import.parse_file(file.filename or "upload", data)
+
+    file_ref = None
+    if file.filename:
+        ext = (file.filename.rsplit(".", 1)[-1] if "." in file.filename else "bin").lower()
+        name = f"{sales_import.timestamp_token()}_{user.id}_{levenshtein_token(file.filename)}"
+        file_ref = _save_upload(name, ext, data)
+
+    imp = SalesImport(
+        department_id=_sales_dept_id(db),
+        title=(file.filename or "Imported file").rsplit("/", 1)[-1][:200],
+        source_type="file",
+        filename=file.filename,
+        file_ref=file_ref,
+        row_count=0,
+        created_by=user.id,
+    )
+    return _preview(db, imp, leads, skipped)
+
+
+def levenshtein_token(name: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(name.encode("utf-8")).hexdigest()[:8]
+
+
+def _save_upload(prefix: str, ext: str, data: bytes) -> str:
+    import os
+
+    file_dir = os.path.join(config.settings.BASE_DIR, "uploads", "sales")
+    os.makedirs(file_dir, exist_ok=True)
+    filename = f"{prefix}.{ext}"
+    with open(os.path.join(file_dir, filename), "wb") as fh:
+        fh.write(data)
+    return f"uploads/sales/{filename}"
+
+
+@app.post("/api/sales/imports/text", response_model=SalesImportPreview)
+def import_sales_text(
+    title: str = Form(""),
+    text: str = Form(""),
+    user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    _guard_scope(user, "sales")
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="No text provided.")
+    leads, skipped = sales_import.parse_text_input(text)
+    imp = SalesImport(
+        department_id=_sales_dept_id(db),
+        title=title.strip()[:200] or "Pasted sales notes",
+        source_type="text",
+        filename=None,
+        file_ref=None,
+        row_count=0,
+        created_by=user.id,
+    )
+    return _preview(db, imp, leads, skipped)
+
+
+@app.post("/api/sales/imports/{import_id}/accept", response_model=list[LeadOut])
+def accept_sales_import(
+    import_id: int,
+    payload: SalesImportAccept,
+    user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    _guard_scope(user, "sales")
+    imp = db.get(SalesImport, import_id)
+    if imp is None:
+        raise HTTPException(status_code=404, detail="Import not found.")
+    created: list[Lead] = []
+    for item in payload.leads:
+        lead = Lead(
+            company=item.company,
+            contact=item.contact,
+            phone=item.phone,
+            email=item.email,
+            category=item.category,
+            address=item.address,
+            website=item.website,
+            value=item.value,
+            status=item.status,
+            stage_note=item.stage_note,
+            owner_id=user.id,
+        )
+        db.add(lead)
+        created.append(lead)
+    db.commit()
+    for lead in created:
+        db.refresh(lead)
+    return created
 
 
 # --------------------------------------------------------------- marketing

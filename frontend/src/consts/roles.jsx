@@ -57,8 +57,8 @@ export const STATUS_META = {
 export const LEAD_STATUS = {
   new: { label: "New", cls: "border-zinc-400/40 bg-zinc-400/10 text-zinc-200" },
   contacted: { label: "Contacted", cls: "border-sky-500/40 bg-sky-500/10 text-sky-300" },
-  closing: { label: "Closing", cls: "border-amber-500/40 bg-amber-500/10 text-amber-300" },
-  closed: { label: "Closed", cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" },
+  closing: { label: "In Progress", cls: "border-amber-500/40 bg-amber-500/10 text-amber-300" },
+  closed: { label: "Closed · Won", cls: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" },
 };
 
 export const PRIORITY_CLS = {

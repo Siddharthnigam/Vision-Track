@@ -94,7 +94,11 @@ class Lead(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     company: Mapped[str] = mapped_column(String(160))
     contact: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    website: Mapped[str | None] = mapped_column(String(255), nullable=True)
     value: Mapped[float] = mapped_column(Float, default=0.0)
     status: Mapped[str] = mapped_column(String(32), default="new")  # new/contacted/closing/closed
     stage_note: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -155,3 +159,19 @@ class ChatMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_timestamp)
 
     user: Mapped[User] = relationship()
+
+
+class SalesImport(Base):
+    __tablename__ = "sales_imports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    department_id: Mapped[int] = mapped_column(ForeignKey("departments.id"))
+    title: Mapped[str] = mapped_column(String(200))
+    source_type: Mapped[str] = mapped_column(String(16), default="file")  # file/text
+    filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    row_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_timestamp)
+
+    creator: Mapped[User | None] = relationship(foreign_keys=[created_by])

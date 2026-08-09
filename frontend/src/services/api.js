@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_BASE || "https://vision-track-1.onrender.com";
 const TOKEN_KEY = "visiontrack.token";
 
 export const tokenStore = {
@@ -24,6 +24,34 @@ async function request(path, { method = "GET", body, params } = {}) {
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+
+  if (res.status === 401) {
+    tokenStore.clear();
+    if (window.location.pathname !== "/login") {
+      window.location.href = "/login";
+    }
+    throw new Error("Session expired. Please log in again.");
+  }
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail || `Request failed (HTTP ${res.status})`);
+  }
+  return data;
+}
+
+async function upload(path, { file, fields = {} } = {}) {
+  const url = new URL(`${API_BASE}${path}`);
+  const formData = new FormData();
+  if (file) formData.append("file", file);
+  Object.entries(fields).forEach(([k, v]) => {
+    if (v !== undefined && v !== null) formData.append(k, v);
+  });
+  const headers = {};
+  const token = tokenStore.get();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(url.toString(), { method: "POST", headers, body: formData });
 
   if (res.status === 401) {
     tokenStore.clear();
@@ -73,7 +101,18 @@ export const api = {
   leads: (params) => request("/leads", { params }),
   createLead: (body) => request("/leads", { method: "POST", body }),
   updateLead: (id, body) => request(`/leads/${id}`, { method: "PATCH", body }),
+  deleteLead: (id) => request(`/leads/${id}`, { method: "DELETE" }),
   signLead: (id) => request(`/leads/${id}/sign`, { method: "POST" }),
+
+  salesImports: () => request("/sales/imports"),
+  importSalesFile: (file) => upload("/api/sales/imports/file", { file }),
+  importSalesText: (text, title) =>
+    upload("/api/sales/imports/text", { fields: { text, title } }),
+  acceptSalesImport: (id, leads) =>
+    request(`/sales/imports/${id}/accept`, {
+      method: "POST",
+      body: { leads },
+    }),
 
   marketingSummary: () => request("/marketing/summary"),
   posts: () => request("/posts"),

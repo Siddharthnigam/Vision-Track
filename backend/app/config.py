@@ -6,6 +6,7 @@ load_dotenv(override=True)
 
 
 class Settings:
+    BASE_DIR: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./visiontrack.db").strip()
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
@@ -19,7 +20,10 @@ class Settings:
     PORT: int = int(os.getenv("PORT", "8000"))
     ALLOWED_ORIGINS: list[str] = [
         origin.strip()
-        for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+        for origin in os.getenv(
+            "ALLOWED_ORIGINS",
+            "http://localhost:5173,https://vision-track-mu.vercel.app",
+        ).split(",")
         if origin.strip()
     ]
 

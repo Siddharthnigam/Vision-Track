@@ -186,7 +186,11 @@ class AiSuggestResponse(BaseModel):
 class LeadCreate(BaseModel):
     company: str = Field(..., min_length=1, max_length=160)
     contact: Optional[str] = None
+    phone: Optional[str] = None
     email: Optional[str] = None
+    category: Optional[str] = None
+    address: Optional[str] = None
+    website: Optional[str] = None
     value: float = Field(default=0.0, ge=0)
     status: str = Field(default="new")
     stage_note: Optional[str] = None
@@ -196,7 +200,11 @@ class LeadCreate(BaseModel):
 class LeadUpdate(BaseModel):
     company: Optional[str] = None
     contact: Optional[str] = None
+    phone: Optional[str] = None
     email: Optional[str] = None
+    category: Optional[str] = None
+    address: Optional[str] = None
+    website: Optional[str] = None
     value: Optional[float] = None
     status: Optional[str] = None
     stage_note: Optional[str] = None
@@ -209,7 +217,11 @@ class LeadOut(BaseModel):
     id: int
     company: str
     contact: Optional[str] = None
+    phone: Optional[str] = None
     email: Optional[str] = None
+    category: Optional[str] = None
+    address: Optional[str] = None
+    website: Optional[str] = None
     value: float
     status: str
     stage_note: Optional[str] = None
@@ -227,6 +239,47 @@ class LeadSignResult(BaseModel):
     lead: LeadOut
     created_tasks: list[TaskOut] = []
     notes: list[str] = []
+
+
+# ---------------------------------------------------------------- Sales import
+
+
+class ImportedLead(BaseModel):
+    company: str
+    contact: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    category: Optional[str] = None
+    address: Optional[str] = None
+    website: Optional[str] = None
+    value: float = 0.0
+    status: str = "new"
+    stage_note: Optional[str] = None
+
+
+class SalesImportOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    department_id: int
+    title: str
+    source_type: str
+    filename: Optional[str] = None
+    file_ref: Optional[str] = None
+    row_count: int
+    created_by: Optional[int] = None
+    created_at: datetime
+
+
+class SalesImportPreview(BaseModel):
+    source: SalesImportOut
+    leads: list[ImportedLead]
+    skipped: int = 0
+    error: Optional[str] = None
+
+
+class SalesImportAccept(BaseModel):
+    leads: list[ImportedLead]
 
 
 # --------------------------------------------------------------- Marketing
