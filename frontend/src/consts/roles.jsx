@@ -35,7 +35,8 @@ export function canViewNav(user, code) {
   if (!user) return false;
   if (user.role === "cofounder") return true;
   if (code === "all") return true;
-  if (code === "vault" || code === "team") return false;
+  if (code === "team") return false;                   // cofounder only
+  if (code === "vault") return user.role === "lead";   // leads can see vault
   return user.dept_code === code;
 }
 
@@ -43,7 +44,8 @@ export function canViewRoute(user, code) {
   if (!user) return false;
   if (user.role === "cofounder") return true;
   if (code === "all") return true;
-  if (code === "vault" || code === "team") return false;
+  if (code === "team") return false;                   // cofounder only
+  if (code === "vault") return user.role === "lead";   // leads can access vault
   return user.dept_code === code;
 }
 

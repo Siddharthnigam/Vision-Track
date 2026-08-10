@@ -22,6 +22,7 @@ import { useAuth } from "../context/AuthContext.jsx";
 import { LEAD_STATUS } from "../consts/roles.jsx";
 import { LeadStatusBadge } from "../components/ui/StatusBadge.jsx";
 import Modal from "../components/ui/Modal.jsx";
+import { Toast, useToast } from "../components/ui/Toast.jsx";
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -51,61 +52,6 @@ const EMPTY_FORM = {
 
 const SAMPLE_TEXT = `company\tphone\tcategoryName\twebsite\taddress
 Shree Saree House\t+91 98765 43210\tSaree Shop\tssarees.example.com\tNarmada Road, Jabalpur, MP 482001`;
-
-// ─── Toast system ─────────────────────────────────────────────────────────────
-
-function Toast({ toasts, dismiss }) {
-  if (!toasts.length) return null;
-  return (
-    <div className="fixed bottom-6 right-6 z-[100] flex flex-col gap-2">
-      {toasts.map((t) => (
-        <div
-          key={t.id}
-          className={`flex items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg transition-all ${
-            t.type === "error"
-              ? "border-red-500/40 bg-red-500/10 text-red-300"
-              : t.type === "success"
-              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-              : "border-neon/40 bg-neon/10 text-neon"
-          }`}
-        >
-          {t.type === "error" ? (
-            <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          ) : (
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-          )}
-          <span className="flex-1">{t.msg}</span>
-          <button onClick={() => dismiss(t.id)} className="ml-2 opacity-60 hover:opacity-100">
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function useToast() {
-  const [toasts, setToasts] = useState([]);
-  const timerRef = useRef({});
-
-  const push = useCallback((msg, type = "info") => {
-    const id = Date.now() + Math.random();
-    setToasts((prev) => [...prev, { id, msg, type }]);
-    timerRef.current[id] = setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3500);
-  }, []);
-
-  const dismiss = useCallback((id) => {
-    clearTimeout(timerRef.current[id]);
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
-
-  const success = useCallback((msg) => push(msg, "success"), [push]);
-  const error = useCallback((msg) => push(msg, "error"), [push]);
-
-  return { toasts, dismiss, success, error, info: push };
-}
 
 // ─── Pipeline stats bar ───────────────────────────────────────────────────────
 

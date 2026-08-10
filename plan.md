@@ -1,381 +1,622 @@
-# VisionTrack — Agency OS Build Plan
+# VisionTrack — Production Readiness Plan
+> Last updated: August 2026 | Stack: React + Vite (Vercel) · FastAPI + SQLAlchemy (Render) · PostgreSQL (Render)
 
-> **Agency OS for Web Development & Social Media Management.** Enterprise task/project tracking, AI-driven dynamic task allocation, end-to-end agency automation, multi-tier departmental hierarchy, social analytics integrations, centralized data vault, granular RBAC, user/task governance, and real-time inter-department collaboration.
-
-- **APP NAME:** VisionTrack
-- **TECH STACK:** Python (FastAPI) · React 18 (Vite + Tailwind CSS) · Gemini 2.5 (`gemini-2.5-flash` via official `@google/genai` SDK)
-- **DESIGN THEME:** Glossy Black `#050505`, Dark Surface `#0d0d0e`, Neon Red `#ef4444`, White typography, neon-glow shadows
-- **PERSISTENCE:** SQLite via SQLAlchemy (single-file `visiontrack.db`, auto-seeds on first boot)
-- **AUTH:** JWT (PyJWT) login with seeded demo users; RBAC enforced server-side
-- **REALTIME:** FastAPI WebSocket `/ws/chat` for inter-department chat
-- **AI ENGINE:** Gemini 2.5 Flash drives task chaining, next-task suggestions, and lead→workflow automation (with deterministic fallback when no API key)
+This document is the single source of truth for making VisionTrack fully production-ready.
+Work through phases in order. Each item has a status field — update it as you go.
 
 ---
 
-## 1. Product Requirements
+## Table of Contents
 
-### 1.1 Core Functional Requirements
-1. **Enterprise Task & Project Tracking** — all business tasks, workflows, client projects, and operations from one platform.
-2. **AI-Driven Dynamic Task Allocation** — completing a task automatically evaluates and triggers the next sequential task via Gemini.
-3. **End-to-End Agency Automation** — tailored for a Web Dev + Social Media agency: marketing, sales pipelines, client onboarding, financial tracking.
-4. **Multi-Tier Departmental Hierarchy** — Co-Founder / Executive Parent Dashboard delegating across **Sales, Marketing, Operations, Finance, Legal**.
-5. **Integrations & Social Media Analytics** — Instagram + email engagement metrics; content scheduling; unified communication tracking.
-6. **Centralized Agency Data Vault** — single source of truth: CRM leads, financial records, client deliverables, legal documentation.
-7. **Granular RBAC** — Co-Founder (super admin), Department Leads, Teammates.
-8. **User Management & Task Governance** — Co-Founders create/manage user IDs, assign branches, and create/update/reassign/override tasks.
-9. **Real-Time Inter-Departmental Collaboration** — chat threads, help flags, cross-departmental tags.
-
-### 1.2 Role System
-| Role | Code | Permissions |
-|------|------|-------------|
-| Co-Founder (Super Admin) | `cofounder` | Full visibility/control over all departments; user creation; task create/update/reassign/override; finance + legal access |
-| Department Lead | `lead` | Own-department read/write; task governance within branch; assign tasks to teammates |
-| Teammate | `teammate` | Own assigned tasks + own department read; chat participation |
-
-### 1.3 Departments & Modules
-| Branch | Color-key | Modules |
-|--------|-----------|---------|
-| Sales | neon red accent | CRM Lead pipeline (New → Contacted → Closing → Closed) |
-| Marketing | fuchsia | Instagram + Email analytics, social post scheduling |
-| Operations | sky/green | Kanban project board + AI next-task suggestions |
-| Finance | amber | Revenue summary widget (inside Executive + Vault) |
-| Legal | violet | Document vault (inside TeamVault) |
+1. [Current State Summary](#current-state)
+2. [Phase 1 — Critical Security & First Login](#phase-1)
+3. [Phase 2 — Bug Fixes & Broken Features](#phase-2)
+4. [Phase 3 — Production Hardening](#phase-3)
+5. [Phase 4 — UX & Feature Completion](#phase-4)
+6. [Render Environment Variables Reference](#env-vars)
+7. [First Deploy Checklist](#deploy-checklist)
 
 ---
 
-## 2. AI Task Engine — Behavior & Prompts
+## Current State Summary {#current-state}
 
-### 2.1 Task Chaining (on `complete`)
-1. User marks a task `Completed`.
-2. `POST /api/tasks/{id}/complete` sets `status=done` and records `completed_at`.
-3. Backend serializes context: completed task, project, department, open tasks, assignees.
-4. `ai_scheduler.chain_next_task(...)` calls Gemini 2.5 Flash with a **system instruction** describing the agency + department rules, requesting strict JSON:
-   ```json
-   {
-     "title": "...",
-     "description": "...",
-     "dept": "operations",
-     "priority": "high",
-     "due_in_days": 2,
-     "assignee_hint": "ops-lead"
-   }
-   ```
-5. Response is returned to the UI as a **suggested next task** (requires approval) OR auto-created when `auto_create=true`. If Gemini key is missing/unreachable → **deterministic fallback**: nearest lower-priority sibling task gets promoted / a hand-off template task is created.
+### What is working ✅
+- Login / JWT auth flow
+- Sales CRM — leads table, import Excel/CSV, advance pipeline stages, sign deals
+- Team Admin — add teammates, assign tasks, update roles inline
+- Executive dashboard — KPI cards, task health, department pulse
+- Operations, Marketing, Vault pages load correctly
+- Vercel frontend deployed, Render backend deployed
+- PostgreSQL database connected (data now persists across restarts)
+- 404 on refresh fixed via `vercel.json`
+- CORS fixed back to wildcard (working)
+- Red glow shadows removed from UI
 
-### 2.2 Lead → Department Workflow (Sales Signing)
-1. Sales promotes a lead to `Closed` (signed) via `PATCH /api/leads/{id}/sign`.
-2. Backend **automatically creates**:
-   - **Operations:** `Build & launch website for {company}` project + queued tasks
-   - **Marketing:** `Social media onboarding for {company}` tasks (IG setup, content calendar)
-3. Gemini enriches descriptions/summaries when available; honestly the templates guarantee the chain even offline.
-
-### 2.3 Next-Task Suggestions (Operations Kanban)
-- `GET /api/projects/{id}/suggest-next` → returns AI-ranked next task options for the project board; UI shows them in an "AI SUGGESTIONS" panel with an Accept button.
-
-### 2.4 System Instruction Shape (ai_scheduler.py)
-```
-You are VisionTrack, the AI scheduling engine of a Web Development &
-Social Media Management agency. Given the department, current task,
-open backlog, and assignee roster, infer the single most logical NEXT task.
-Reply with JSON only: {"title","description","dept","priority",
-"due_in_days","assignee_hint"}.
-Follow the department workflow rules:
-- sales: follow-ups and proposal drafting before close
-- operations: dev/project hand-offs, review gates before Done
-- marketing: content creation → review → publish; report after campaign
-- finance: invoice after closed deals
-- legal: contract review into vault
-```
+### What is broken or missing ❌
+- Login page shows demo accounts with real passwords (security risk)
+- No way to create your real cofounder account on a fresh database
+- Seed script still runs in non-production environments and creates fake data
+- Executive dashboard shows `$` instead of `₹` for Indian currency
+- Executive dashboard health bar labels are `undefined` (code bug)
+- TeamAdmin uses old inline toast, not the proper toast system
+- No password reset for team members from UI
+- Gemini API key is committed to Git in `.env` (security risk)
+- JWT token never expires in practice (set to 24h, no refresh)
+- No rate limiting on login endpoint (brute force possible)
 
 ---
 
-## 3. Backend Architecture
-
-### 3.1 Layout (backend/)
-```
-backend/
-├── app/
-│   ├── __init__.py
-│   ├── main.py              # FastAPI app, CORS, router mounting, WebSocket, lifespan auto-seed
-│   ├── config.py            # .env loading (override=True): JWT_SECRET, GEMINI_API_KEY, DB, CORS, PORT
-│   ├── database.py          # SQLAlchemy engine + SessionLocal + Base + get_db()
-│   ├── models.py            # ORM: User, Task, Project, Lead, SocialPost, Metric, DocItem, ChatMessage
-│   ├── schemas.py           # Pydantic request/response models
-│   └── services/
-│       ├── __init__.py
-│       ├── security.py      # PBKDF2 hashing, JWT create/verify, get_current_user dependency
-│       └── ai_scheduler.py  # Gemini client: chain_on_complete, workflow_from_lead, suggest_next_task
-├── scripts/
-│   └── seed.py              # Atomic seeding of users, leads, projects, tasks, metrics, posts, docs, chat
-├── .env                     # GEMINI_API_KEY, JWT_SECRET, PORT=8000, DB url, CORS
-├── requirements.txt
-└── visiontrack.db           # (generated, gitignore)
-```
-
-### 3.2 Dependencies (`requirements.txt`)
-```
-fastapi>=0.115
-uvicorn[standard]>=0.32
-sqlalchemy>=2.0
-google-genai>=1.5.0
-pydantic>=2.9
-python-dotenv>=1.0
-PyJWT>=2.9
-```
-
-### 3.3 Data Models (models.py)
-**Department** — `id, code(sales|marketing|operations|finance|legal), name, color`
-
-**User** — `id, name, email(unique), password_hash, role(cofounder|lead|teammate), department_id, created_at`
-
-**Task** — `id, title, description, status(queued|in_progress|review|done), priority, department_id, project_id(N), assignee_id(N), creator_id, due date, created_at, completed_at(N), ai_generated(bool), source`
-
-**Project** — `id, name, client, description, status(active|at_risk|completed|on_hold), department_id, start, due`
-
-**Lead** — `id, company, contact, email, value, status(new|contacted|closing|closed), stage_note, owner_id, created_at, signed_at`
-
-**SocialPost** — `id, platform(instagram|email), content, scheduled_at, status(draft|scheduled|published), engagement`
-
-**Metric** — `id, platform(instagram|email), label, value, unit, recorded_on`
-
-**DocItem** — `id, department_id, title, doc_type(contract|invoice|policy|nda), file_ref, access_code(cofounder-only|dept)`
-
-**ChatMessage** — `id, user_id, body, dept, tag(help|info|dependency|general), thread_id, created_at`
-
-### 3.4 API Endpoint Map (all prefixed `/api`)
-| Method | Path | Access | Purpose |
-|--------|------|--------|---------|
-| POST | `/auth/login` | public | verify credentials → JWT + user |
-| GET | `/auth/me` | any | current user snapshot |
-| GET | `/health` | public | liveness + AI/model status |
-| GET | `/departments` | any | list branches |
-| GET | `/users` | cofounder | list team |
-| POST | `/users` | cofounder | create user (role/dept assignment) |
-| PATCH | `/users/{id}` | cofounder | update role/dept/active |
-| GET | `/tasks?dept=&assignee=&status=` | scoped | role-scoped task list |
-| POST | `/tasks` | lead/cofound | create task |
-| PATCH | `/tasks/{id}` | lead/cofound/assignee | update fields |
-| PATCH | `/tasks/{id}/complete` | scoped | complete → **AI chain** returns suggested next |
-| GET | `/projects?dept=` | scoped | list projects |
-| POST | `/projects` | lead/cofound | create project |
-| GET | `/projects/{id}/ai/suggest` | scoped | AI next-task suggestion |
-| GET/POST | `/leads` | sales scoped | CRM list/create |
-| PATCH | `/leads/{id}` | sales | change stage |
-| POST | `/leads/{id}/sign` | sales | signed → **auto workflows** |
-| GET | `/marketing/instagram` | marketing+valid | IG metrics |
-| GET | `/marketing/email` | marketing | email metrics |
-| GET/POST | `/posts` | marketing | scheduled posts |
-| GET | `/finance/summary` | cofound+finance | revenue, invoices, signed deals |
-| GET | `/vault/docs?dept=` | role-scoped | legal/finance document index |
-| GET | `/chat?dept=` | any | chat history |
-| POST | `/chat` | any | post message |
-| WS | `/ws/chat` | any | broadcast messages per dept |
-
-### 3.5 Auth & RBAC Enforcement
-- Login: PBKDF2-hashed passwords stored in DB; JWT carries `sub=user_id, role, dept`.
-- `get_current_user` decodes `Authorization: Bearer` header → HTTP 401 if invalid; 403 if scope violated.
-- Permission helper `require_scope(min_role, dept)`:
-  - `cofounder` → all departments + user admin + finance/legal vault
-  - `lead` → own `department_id` (read/write tasks & dept dashboards)
-  - `teammate` → own tasks only (write), department read (dashboard + chat)
-- **Task governance:** leads + cofound can reassign/override any task; teammates only their own.
-
-### 3.6 Startup / Seeding
-- App lifespan: `Base.metadata.create_all()`, then if `User` table is empty → call `seed.py` loader.
-- `seed_users` — demo accounts (see §7). `seed_business` — leads, projects, tasks across columns so the Kanban looks alive on first load; IG/email metric rows; scheduled posts; 2 finance docs + 2 legal docs; a starter chat thread.
-
-### 3.7 WebSocket Chat (`/ws/chat`)
-- Client connects with `?token=<jwt>`; rooms keyed by `department_id`.
-- Server broadcasts `{message, user, dept, tag, ts}`; also accepts `POST /api/chat` REST fallback.
-- Frontend `services/ws.js` auto-reconnects and keeps ordering by `created_at`.
+## Phase 1 — Critical Security & First Login {#phase-1}
+> Complete this phase before sharing the live URL with anyone.
 
 ---
 
-## 4. Frontend Architecture
+### 1.1 — Remove Demo Accounts from Login Page
 
-### 4.1 Layout (frontend/)
+**Status:** ☐ Not started
+
+**Problem:**
+`Login.jsx` shows a panel with 5 demo accounts and their passwords:
 ```
-frontend/
-├── index.html
-├── package.json
-├── vite.config.js            # @vitejs/plugin-react, server.port=5173
-├── postcss.config.js
-├── tailwind.config.js        # theme tokens: obsidian/surface/edge/neon + glow shadows
-└── src/
-    ├── main.jsx              # ReactDOM + BrowserRouter + AuthProvider + Tailwind css
-    ├── App.jsx               # Routes, AuthGuard, role-filtered Sidebar, global ChatDrawer
-    ├── index.css             # Tailwind directives + vos-* component classes + scrollbars
-    ├── consts/roles.js       # RBAC matrix + nav mapping            [shared]
-    ├── context/AuthContext.jsx # current user, token, login/logout, refresh
-    ├── services/
-    │   ├── api.js            # fetch wrapper (JWT header), typed methods per endpoint
-    │   └── ws.js             # WebSocket wrapper (auto-reconnect, subscribe)
-    ├── components/
-    │   ├── Sidebar.jsx       # role-filtered department nav, glow active states
-    │   ├── ChatDrawer.jsx    # floating collaboration drawer + mobile sheet
-    │   └── ui/
-    │       ├── KpiCard.jsx   # glossy metric card
-    │       ├── StatusBadge.jsx # stage/status pill colors
-    │       ├── AiSuggestion.jsx # AI next-task card with Accept
-    │       ├── Modal.jsx     # overlay + focus
-    │       └── MiniBar.jsx   # tiny div-based bar/spark for inline charts
-    └── pages/
-        ├── Login.jsx
-        ├── Executive.jsx     # command center
-        ├── SalesCRM.jsx
-        ├── Operations.jsx    # kanban + AI suggestions
-        ├── Marketing.jsx
-        └── TeamVault.jsx     # RBAC + user mgmt + finance/legal docs
+ava@vision.agency / cofound123
+marcus@vision.agency / lead123
+priya@vision.agency / lead123
+...
+```
+These are committed to Git and visible to anyone who inspects the source code.
+Anyone can log in as cofounder on your live site right now.
+
+**Fix:**
+- Delete the entire `DEMOS` array and the "Demo accounts" card from `Login.jsx`
+- Keep only the email + password form
+- Add a "Forgot password? Contact admin." note for teammates
+
+**File to edit:** `frontend/src/pages/Login.jsx`
+
+---
+
+### 1.2 — Add First-Run Cofounder Bootstrap
+
+**Status:** ☐ Not started
+
+**Problem:**
+On a fresh PostgreSQL database there are zero users. You cannot log in.
+The seed script creates fake demo users — you don't want fake users in production.
+There is currently no way to create your real cofounder account.
+
+**Fix:**
+Add a bootstrap function to `main.py` that runs on startup:
+- Reads `INIT_COFOUNDER_EMAIL`, `INIT_COFOUNDER_PASSWORD`, `INIT_COFOUNDER_NAME` from env
+- Checks if zero users exist in the database
+- If zero users AND env vars are set → creates one cofounder account
+- If users already exist → does nothing (idempotent, safe to leave on)
+
+**Steps:**
+
+1. In `backend/app/main.py`, add this function before `_lifespan`:
+
+```python
+def _bootstrap_cofounder() -> None:
+    """Create the first cofounder account if the DB is empty."""
+    email = os.getenv("INIT_COFOUNDER_EMAIL", "").strip().lower()
+    password = os.getenv("INIT_COFOUNDER_PASSWORD", "").strip()
+    name = os.getenv("INIT_COFOUNDER_NAME", "Cofounder").strip()
+    if not email or not password:
+        return
+    db = SessionLocal()
+    try:
+        count = db.execute(select(func.count(User.id))).scalar_one()
+        if count > 0:
+            return  # users already exist, do nothing
+        user = User(
+            name=name,
+            email=email,
+            password_hash=security.hash_password(password),
+            role="cofounder",
+            active=True,
+        )
+        db.add(user)
+        db.commit()
+        print(f"[bootstrap] Cofounder account created: {email}")
+    finally:
+        db.close()
 ```
 
-### 4.2 UI Flow (page-by-page)
+2. Call it in `_lifespan` before the seed guard:
+```python
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    _migrate_leads_schema()
+    _backfill_lead_fields()
+    _bootstrap_cofounder()          # ← add this line
+    if os.getenv("ENVIRONMENT") != "production":
+        try:
+            from scripts.seed import run as seed_demo
+            seed_demo()
+        except Exception:
+            pass
+    yield
+```
 
-**1. `/login`**
-- Email + Password; on success store JWT in `localStorage` → context → redirect `/`. Live status of backend; demo credential hints listed under the form.
+3. On Render, set these environment variables:
+   - `INIT_COFOUNDER_EMAIL` = your real email
+   - `INIT_COFOUNDER_PASSWORD` = a strong password (12+ chars)
+   - `INIT_COFOUNDER_NAME` = your real name
 
-**2. Sidebar (persistent, left)**
-- Brand mark `VisionTrack` (+ neon eye), sections:
-  - **Command** (`/`, visible to everyone; full when cofounder)
-  - **Sales** (`/sales`) — Sales dept users
-  - **Marketing** (`/marketing`) — Marketing dept users
-  - **Operations** (`/operations`) — Ops dept users
-  - **Team & Vault** (`/vault`) — cofounder only
-- Glow active state per link; logout at bottom; user chip (name, role, dept).
+4. Redeploy → log in with your real credentials → you're in as cofounder
+5. From Team Admin, add your real team members
 
-**3. `/` Executive Command Center (co-founder/exec)**
-- KPI row: Revenue (YTD), Active Projects, Open Tasks, Pipeline Value (`SUM lead.value`)
-- Per-department stat cards (Sales/Marketing/Operations/Finance/Legal)
-- Task health bars (queued/in-progress/review/done percentages)
-- Finance summary widget + Legal vault recent docs widget
-- Chat preview + "collaboration" business presence stat.
+**File to edit:** `backend/app/main.py`
 
-**4. `/sales` (SalesCRM.jsx)**
-- Lead-stage filter chips: All / New / Contacted / Closing / Closed.
-- Table: Company, Contact, Value, Owner, Stage badge, updated, actions.
-- Inline "Advance stage" dropdown + **Sign deal** (invokes `/leads/{id}/sign`) → toast + auto-created Ops/Marketing tasks appear.
-- Add-lead modal.
+---
 
-**5. `/operations` (Operations.jsx)**
-- Project/province selector chips.
-- Kanban columns: `queued → in_progress → review → done`; each card shows title/assignee/due/priority.
-- Column-"Suggest next" (calls `ai-next`) renders `AiSuggestion` cards with **Accept** (creates task) or **Dismiss**.
-- Status flip via card buttons (Start / Ready review / Complete).
+### 1.3 — Remove Gemini API Key from Git
 
-**6. `/marketing` (Marketing.jsx)**
-- IG stats cards: followers, reach, engagement, new subscribers + MiniBars 7-day.
-- Email metrics cards: stats, open rate, CTR, bounces + MiniBars.
-- Posts schedule table: draft/scheduled/published, content, platform; "Create post" modal.
+**Status:** ☐ Not started
 
-**7. `/team-vault` (TeamVault.jsx)**
-- Tabs: **Team** / **RBAC Matrix** / **Vault (Finance+Legal)**.
-- Team panel (co-founder only): create user form (name/email/role/dept + initial password), table with edit role/dept + deactivate → also the "task governance" table "reassign task to" picker.
-- RBAC matrix (static grid showing cofounder/lead/teammate × capability rows).
-- Vault: doc list filtered by `department_id` with vault badges; co-founder sees all; finance/legal leads see their department only.
+**Problem:**
+`backend/.env` contains your real Gemini API key committed to the repository:
+```
+GEMINI_API_KEY=AIzaSyDVDWhZ8aYGrnumyrv-aeVME7285hyjjdI
+```
+This is now public. Anyone with repo access can use your API quota.
 
-**8. ChatDrawer (global toggle)**
-- Floating button (bottom-right). Opens slide-over; header: current dept channel; threads list; tag filters row: `general | help | dependency | co-app`; input + send; live WS updates + REST fallback. Seen/online pulse dot on new-message badge for departments.
+**Fix:**
+1. Go to Google AI Studio → revoke this key → generate a new one
+2. Set the new key ONLY in Render environment variables, never in `.env`
+3. Change `backend/.env` to:
+```
+GEMINI_API_KEY=replace-with-your-key-in-render-dashboard
+```
+4. Commit and push the sanitized `.env`
 
-### 5.3 Design Tokens (tailwind.config.js)
-```js
-colors: {
-  obsidian:"#050505", surface:"#0d0d0e", edge:"#1f1f23",
-  crimson:"#dc2626", neon:"#ef4444",
+**File to edit:** `backend/.env`
+
+---
+
+### 1.4 — Fully Disable Seed Script in Production
+
+**Status:** ☐ Partially done (guard added but seed data may already exist)
+
+**Problem:**
+The seed script creates fake demo accounts (`ava@vision.agency`, `marcus@vision.agency`, etc.)
+with known passwords. If the database was seeded before adding the `ENVIRONMENT=production`
+guard, these accounts still exist in your live PostgreSQL database.
+
+**Fix:**
+1. Confirm `ENVIRONMENT=production` is set on Render ← do this first
+2. Log in to your live site as `ava@vision.agency` / `cofound123`
+   - If you can log in → the seed data exists in your live DB
+   - Go to Team Admin → disable or delete all fake users
+3. Change all fake user passwords from Team Admin as a safety measure
+4. After your real cofounder account is created (Phase 1.2), disable `ava@vision.agency`
+
+---
+
+## Phase 2 — Bug Fixes & Broken Features {#phase-2}
+> Fix these after Phase 1 is complete.
+
+---
+
+### 2.1 — Executive Dashboard: Currency Shows `$` Instead of `₹`
+
+**Status:** ☐ Not started
+
+**Problem:**
+`Executive.jsx` has a local `fmtMoney` function at the bottom that formats as USD:
+```javascript
+function fmtMoney(n) {
+  return `$${Math.round(n || 0).toLocaleString()}`;
 }
-boxShadow: { "glow-sm", "glow", "glow-lg", "glow-inner" }
-animation: pulseglow (2s), caret (1s step-end)
-fonts: mono stack (JetBrains Mono…)
+```
+All values show as `$4,200` instead of `₹4,200`.
+
+**Fix:**
+Replace the local `fmtMoney` in `Executive.jsx` with the INR formatter:
+```javascript
+const inr = new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  maximumFractionDigits: 0,
+});
+function fmtMoney(n) {
+  return n ? inr.format(n) : "—";
+}
 ```
 
-`index.css` utility classes: `.vos-card`, `.glow-text`, `.vos-btn-primary`, `.vos-btn-ghost`, `.vos-input`, `.vos-label`, `.vos-badge`, `.glossy`, `.terminal-scroll`.
+**File to edit:** `frontend/src/pages/Executive.jsx`
 
 ---
 
-## 5. Build Order (Phases)
+### 2.2 — Executive Dashboard: Health Bar Labels Are Undefined
 
-**Phase 0 — Scaffold:** (done) `vision-track/` dirs created; root `plan.md`.
+**Status:** ☐ Not started
 
-**Phase 1 — Backend foundation:**
-- requirements, `.env`, `config.py`, `database.py`, ORM `models.py`, `schemas.py`.
-
-**Phase 2 — Security + AI engine:**
-- `services/security.py` (hash/JWT), `services/ai_scheduler.py` (chain + suggest + fallback rules).
-
-**Phase 3 — API + seed:**
-- `main.py` routes (auth, users, tasks, leads, projects, marketing, finance, vault, chat + AI hooks).
-- `scripts/seed.py` demo data; lifespan auto-seed.
-
-**Phase 4 — Frontend scaffold:**
-- `npm` package.json, Vite/Tailwind/PostCSS configs, `index.html`, `main.jsx`, `index.css` theme, `services/api.js` + `ws.js`.
-
-**Phase 5 — Shell + auth:**
-- `AuthContext`, `Login.jsx`, layout, `Sidebar.jsx`, `ChatDrawer.jsx` + `ui/*` primitives.
-
-**Phase 6 — Module pages:**
-- `Executive`, `SalesCRM`, `Operations` (Kanban + AI), `Marketing`, `TeamVault`, wire `App.jsx` routing + guards.
-
-**Phase 7 — Verification & polish:**
-- backend `pip install` in venv, seed boot, endpoint smoke-test, WS broadcast test.
-- frontend `npm install`, `npm run build`, live dev cross-check CORS/WS/io → fix → README run-scripts → final run through.
-
----
-
-## 6. Seeded Demo Credentials (scripts/seed.py)
-
-| Role | Name | Login | Department | Sample credentials |
-|------|------|-------|------------|-----------|
-| Co-Founder | Ava Chen | `ava@vision.agency` | — (all) | `cofound123` |
-| Lead Sales | Marcus Cole | `marcus@vision.agency` | Sales | `lead123` |
-| Teammate | Theo Reed | `theo@vision.agency` | Sales | `team123` |
-| Lead Ops | Priya Patel | `priya@vision.agency` | Operations | `lead123` |
-| Teammate | Dev Kumar |  `dev@vision.agency` | Operations | `team123` |
-| Lead Marketing | Zoe Lin | `zoe@vision.agency` | Marketing | `lead123` |
-| Teammate | Mia Cruz | `mia@vision.agency` | Marketing | `team123` |
-| Lead Finance | Sam Costa | `sam@vision.agency` | Finance | `lead123` |
-| Legal Counsel| Dana Ives | `dana@vision.agency` | Legal | `lead123` |
-
-Sample seed records: 12 leads across stages; 4 projects; ~16 tasks split over Kanban columns; 14-day IG/email metric series; 6 scheduled posts; 5 documents; 8 chat messages.
-
----
-
-## 7. Verification Checklist (Step to pass)
-
-- [ ] `pip install -r requirements.txt` succeeds in `backend/.venv`
-- [ ] Boot uvicorn; `/health` returns ok + `ai_available`.
-- [ ] `/auth/login` issues a JWT; `/auth/me` round-trips user.
-- [ ] `PATCH /leads/{id}/sign` auto-creates 1 Ops + 1 Marketing task (asserted via API).
-- [ ] `POST /tasks/{id}/complete` returns `{suggested_next: {...}}` in pattern even without a Gemini key (fallback).
-- [ ] Non-owner teammate `PATCH /tasks/{other}` task → 403.
-- [ ] WS: two clients → broadcast messages to department channel.
-- [ ] `npm run build` succeeds; `npm run dev` serves at 5173.
-- [ ] Browser smoke: login as Ava → navigate all pages; login as Zoe → /operations redirects/blocked.
-
----
-
-## 8. Runbook (final README)
-
-### Backend
-```powershell
-cd vision-track/backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-# edit .env → set GEMINI_API_KEY + JWT_SECRET
-uvicorn app.main:app --reload --port 8000   # auto-seeds on first boot
+**Problem:**
+In `Executive.jsx`, the `HealthBars` component uses `s.label` but the segments
+array does not have a `label` property — it only has `key` and `color`:
+```javascript
+const segments = [
+  { key: "queued", color: "#71717a" },       // no label!
+  { key: "in_progress", color: "#38bdf8" },
+  ...
+];
+// later:
+{s.label} · {counts[s.key]}   // s.label is undefined → shows nothing
 ```
+
+**Fix:**
+Add `label` to each segment:
+```javascript
+const segments = [
+  { key: "queued",      label: "Queued",      color: "#71717a" },
+  { key: "in_progress", label: "In Progress", color: "#38bdf8" },
+  { key: "review",      label: "Review",      color: "#f59e0b" },
+  { key: "done",        label: "Done",        color: "#10b981" },
+];
+```
+
+**File to edit:** `frontend/src/pages/Executive.jsx`
+
+---
+
+### 2.3 — TeamAdmin: Replace Old Toast with Proper Toast System
+
+**Status:** ☐ Not started
+
+**Problem:**
+`TeamAdmin.jsx` uses a single `toast` string state and inline banner:
+```javascript
+const [toast, setToast] = useState("");
+// shows as a plain neon banner at the top
+```
+This doesn't support error/success distinction, auto-dismiss, or multiple concurrent messages.
+
+**Fix:**
+Import and use the same `useToast` hook pattern from `SalesCRM.jsx`.
+Extract `useToast` and the `Toast` component into a shared file:
+`frontend/src/components/ui/Toast.jsx`
+Then import it in both `SalesCRM.jsx` and `TeamAdmin.jsx`.
+
+**Files to edit/create:**
+- `frontend/src/components/ui/Toast.jsx` (new — extract from SalesCRM)
+- `frontend/src/pages/SalesCRM.jsx` (import from shared file)
+- `frontend/src/pages/TeamAdmin.jsx` (replace old toast)
+
+---
+
+### 2.4 — TeamAdmin: Password Reset for Team Members
+
+**Status:** ☐ Not started
+
+**Problem:**
+There is no way for the cofounder to reset a teammate's password from the UI.
+The `PATCH /api/users/{id}` endpoint supports `password` in the payload but the
+Team Admin UI has no field for it.
+
+**Fix:**
+Add a "Reset Password" button in the team roster table that opens a small modal
+with a new password input field. On submit, calls `api.updateUser(id, { password: newPass })`.
+
+**Files to edit:** `frontend/src/pages/TeamAdmin.jsx`
+
+---
+
+### 2.5 — Vault & Team Routes Hidden from Leads
+
+**Status:** ☐ Not started
+
+**Problem:**
+In `roles.jsx`, `canViewRoute` returns `false` for `vault` and `team` for non-cofounders:
+```javascript
+if (code === "vault" || code === "team") return false;
+```
+This means department leads can't access the vault to see their own department's documents.
+
+**Fix:**
+Allow `lead` role to access vault (read-only for their own department):
+```javascript
+export function canViewRoute(user, code) {
+  if (!user) return false;
+  if (user.role === "cofounder") return true;
+  if (code === "all") return true;
+  if (code === "team") return user.role === "cofounder"; // cofounder only
+  if (code === "vault") return user.role === "lead" || user.role === "cofounder";
+  return user.dept_code === code;
+}
+```
+The backend already scopes vault docs correctly by department — frontend just needs to allow the route.
+
+**File to edit:** `frontend/src/consts/roles.jsx`
+
+---
+
+### 2.6 — Sidebar: Hide Team Admin from Non-Cofounders
+
+**Status:** ☐ Not started
+
+**Problem:**
+`canViewNav` in `roles.jsx` blocks vault and team nav items for all non-cofounders.
+But after fixing 2.5, leads should see Vault in the sidebar.
+
+**Fix:**
+```javascript
+export function canViewNav(user, code) {
+  if (!user) return false;
+  if (user.role === "cofounder") return true;
+  if (code === "all") return true;
+  if (code === "team") return false;                    // cofounder only
+  if (code === "vault") return user.role === "lead";    // leads can see vault
+  return user.dept_code === code;
+}
+```
+
+**File to edit:** `frontend/src/consts/roles.jsx`
+
+---
+
+## Phase 3 — Production Hardening {#phase-3}
+
+---
+
+### 3.1 — Add Rate Limiting to Login Endpoint
+
+**Status:** ☐ Not started
+
+**Problem:**
+`POST /api/auth/login` has no rate limiting. An attacker can attempt thousands of
+password combinations per second (brute force attack).
+
+**Fix:**
+Install `slowapi` and add a rate limiter:
+```
+slowapi>=0.1.9
+```
+Limit login to **10 attempts per minute per IP**.
+
+**Files to edit:**
+- `backend/requirements.txt` — add `slowapi>=0.1.9`
+- `backend/app/main.py` — add rate limiter middleware and decorator on login route
+
+---
+
+### 3.2 — Shorten JWT Expiry
+
+**Status:** ☐ Not started
+
+**Problem:**
+`JWT_EXPIRES_MINUTES=1440` means tokens are valid for 24 hours.
+If a token is stolen, the attacker has 24 hours of full access.
+
+**Fix:**
+Set on Render:
+```
+JWT_EXPIRES_MINUTES=480
+```
+This gives 8 hours — enough for a full work day without forcing re-login.
+
+---
+
+### 3.3 — Add Proper 404 Page
+
+**Status:** ☐ Not started
+
+**Problem:**
+Unknown routes silently redirect to `/` with no feedback to the user.
+In `App.jsx`:
+```jsx
+<Route path="*" element={<Navigate to="/" replace />} />
+```
+
+**Fix:**
+Create `frontend/src/pages/NotFound.jsx` — a simple "Page not found" screen
+with a back-to-home button. Replace the `<Navigate>` fallback with it.
+
+**Files to create/edit:**
+- `frontend/src/pages/NotFound.jsx` (new)
+- `frontend/src/App.jsx` (replace Navigate fallback)
+
+---
+
+### 3.4 — Sanitize `.env` File
+
+**Status:** ☐ Not started
+
+**Problem:**
+`backend/.env` contains real secrets that should never be in Git:
+- Real `GEMINI_API_KEY`
+- The default `JWT_SECRET` (weak)
+
+**Fix:**
+Replace `backend/.env` with placeholder values only:
+```env
+# Copy this file to .env.local for local development
+# NEVER put real secrets here — use Render environment dashboard for production
+
+GEMINI_API_KEY=your-gemini-key-here
+GEMINI_MODEL=gemini-2.5-flash
+JWT_SECRET=local-dev-secret-change-me
+JWT_EXPIRES_MINUTES=1440
+PORT=8000
+DATABASE_URL=sqlite:///./visiontrack.db
+ALLOWED_ORIGINS=http://localhost:5173
+ENVIRONMENT=development
+```
+
+**File to edit:** `backend/.env`
+
+---
+
+### 3.5 — Add Health Check to Render
+
+**Status:** ☐ Not started
+
+**Problem:**
+Render's free tier spins down after 15 minutes of inactivity. The first request
+after spin-down takes 30–60 seconds (cold start). Users see a loading hang.
+
+**Fix (Render dashboard):**
+1. Go to Render Web Service → Settings → Health & Alerts
+2. Set Health Check Path: `/health`
+3. This keeps Render from marking the service as unhealthy
+
+**Optional (keep-alive):**
+Use a free uptime monitor like [UptimeRobot](https://uptimerobot.com) to ping
+`https://your-backend.onrender.com/health` every 5 minutes.
+This prevents spin-down on the free tier entirely.
+
+---
+
+## Phase 4 — UX & Feature Completion {#phase-4}
+
+---
+
+### 4.1 — Add "Change My Password" for All Users
+
+**Status:** ☐ Not started
+
+Every user should be able to change their own password without going through the cofounder.
+Add a small profile dropdown in the sidebar with a "Change password" option.
+
+**Files to create/edit:**
+- `frontend/src/components/Sidebar.jsx`
+- `frontend/src/components/ui/ChangePasswordModal.jsx` (new)
+
+---
+
+### 4.2 — Add Pagination or Infinite Scroll to Leads Table
+
+**Status:** ☐ Not started
+
+When leads grow beyond 200–300 rows, the table becomes slow.
+Add `limit` + `offset` params to `GET /api/leads` and paginate the frontend table.
+
+---
+
+### 4.3 — Export Leads to Excel/CSV
+
+**Status:** ☐ Not started
+
+Sales team should be able to export filtered leads as a `.csv` file.
+This is a pure frontend feature — use `Papa.parse` or build a simple CSV serializer.
+
+---
+
+### 4.4 — Add "Last Updated" Column to Leads Table
+
+**Status:** ☐ Not started
+
+The `Lead` model has an `updated_at` column but it's not shown in the UI.
+Add it as a sortable column in the CRM table.
+
+---
+
+### 4.5 — Marketing & Finance Pages Need Real Data Connections
+
+**Status:** ☐ Not started
+
+The Marketing and Finance pages currently only show data if the seed script ran
+(which is now disabled in production). These pages need to gracefully handle
+empty states and guide the cofounder to add real metrics.
+
+---
+
+## Render Environment Variables Reference {#env-vars}
+
+Set ALL of these in Render → Web Service → Environment before going live:
+
+| Variable | Value | Notes |
+|----------|-------|-------|
+| `DATABASE_URL` | `postgresql://...` | Internal URL from Render PostgreSQL |
+| `JWT_SECRET` | `<128-char hex>` | `python -c "import secrets; print(secrets.token_hex(64))"` |
+| `JWT_EXPIRES_MINUTES` | `480` | 8 hours |
+| `ENVIRONMENT` | `production` | Disables seed script |
+| `ALLOWED_ORIGINS` | `https://your-app.vercel.app` | Exact Vercel URL |
+| `GEMINI_API_KEY` | `AIzaSy...` | New key from Google AI Studio |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | |
+| `INIT_COFOUNDER_EMAIL` | `your@email.com` | Your real email — used only on first boot |
+| `INIT_COFOUNDER_PASSWORD` | `YourStrong#Pass1` | 12+ chars — used only on first boot |
+| `INIT_COFOUNDER_NAME` | `Your Name` | |
+| `PORT` | `8000` | Render sets this automatically |
+
+> After your cofounder account is created and you've verified login,
+> you can remove `INIT_COFOUNDER_EMAIL`, `INIT_COFOUNDER_PASSWORD`, and
+> `INIT_COFOUNDER_NAME` from Render environment for security.
+
+---
+
+## First Deploy Checklist {#deploy-checklist}
+
+Work through this in order. Every item must be ✅ before shipping.
+
+### Security (do first)
+- [ ] Revoke old Gemini API key, generate new one
+- [ ] Set all Render environment variables (table above)
+- [ ] Set `ENVIRONMENT=production` on Render
+- [ ] Sanitize `backend/.env` — replace real secrets with placeholders
+- [ ] Commit and push sanitized `.env`
+
+### Backend bootstrap
+- [ ] Set `INIT_COFOUNDER_EMAIL` + `INIT_COFOUNDER_PASSWORD` + `INIT_COFOUNDER_NAME` on Render
+- [ ] Redeploy backend on Render
+- [ ] Check Render logs — see `[bootstrap] Cofounder account created: your@email.com`
+- [ ] Log in on live site with your real credentials — succeeds ✅
+
+### Clean up demo data
+- [ ] Log in to live site with your real cofounder credentials
+- [ ] Go to Team Admin → find all `@vision.agency` demo users
+- [ ] Disable or delete all demo users
+- [ ] Verify you can no longer log in as `ava@vision.agency`
 
 ### Frontend
-```powershell
-cd vision-track/frontend
-npm install
-npm run dev          # http://localhost:5173
-```
+- [ ] Remove demo accounts panel from `Login.jsx`
+- [ ] Fix `fmtMoney` to use `₹` in `Executive.jsx`
+- [ ] Fix health bar labels in `Executive.jsx`
+- [ ] Push all frontend changes → Vercel redeploys
 
-### Production sanity
-```powershell
-npm run build        # emits dist/ served by any static host; proxied to API
+### Verification
+- [ ] Log in on live site — only your real account works
+- [ ] Add a test teammate from Team Admin
+- [ ] Log in as that teammate — correct dept scope enforced
+- [ ] Upload an Excel sheet in Sales CRM
+- [ ] Log out, wait 2 min, log back in — leads still there ✅
+- [ ] Refresh the page on `/sales` — no 404 ✅
+
+---
+
+## Summary: Order of Implementation
+
+```
+Phase 1 (Today — Security)
+├── 1.1  Remove demo panel from Login.jsx
+├── 1.2  Add cofounder bootstrap to main.py
+├── 1.3  Revoke + replace Gemini API key
+└── 1.4  Disable/delete demo accounts from live DB
+
+Phase 2 (This Week — Bug Fixes)
+├── 2.1  Fix ₹ currency in Executive.jsx
+├── 2.2  Fix health bar labels in Executive.jsx
+├── 2.3  Extract Toast to shared component
+├── 2.4  Add password reset in TeamAdmin
+├── 2.5  Allow leads to access vault route
+└── 2.6  Fix sidebar nav for leads
+
+Phase 3 (Before Public Launch — Hardening)
+├── 3.1  Rate limit login endpoint
+├── 3.2  Set JWT expiry to 8 hours
+├── 3.3  Add proper 404 page
+├── 3.4  Sanitize .env file
+└── 3.5  Configure health check + uptime monitor
+
+Phase 4 (Post Launch — Improvements)
+├── 4.1  Change password for all users
+├── 4.2  Paginate leads table
+├── 4.3  Export leads to CSV
+├── 4.4  Add updated_at to leads table
+└── 4.5  Empty states for Marketing & Finance
 ```
 
 ---
 
-## 9. Future Stretch (out-of-scope v1)
-- OAuth / SSO + invite emails; stripe funds; daily AI standup digest; drag-drop Kanban via dnd-kit; multi-tenant workspaces; real S3 upload for vault docs; Telemetry/billing per user.
+*VisionTrack Production Plan · v1.0 · August 2026*

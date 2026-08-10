@@ -11,10 +11,10 @@ const DEPT_ORDER = ["sales", "marketing", "operations", "finance", "legal"];
 function HealthBars({ counts }) {
   const total = counts.queued + counts.in_progress + counts.review + counts.done || 1;
   const segments = [
-    { key: "queued", color: "#71717a" },
-    { key: "in_progress", color: "#38bdf8" },
-    { key: "review", color: "#f59e0b" },
-    { key: "done", color: "#10b981" },
+    { key: "queued",      label: "Queued",      color: "#71717a" },
+    { key: "in_progress", label: "In Progress", color: "#38bdf8" },
+    { key: "review",      label: "Review",      color: "#f59e0b" },
+    { key: "done",        label: "Done",        color: "#10b981" },
   ];
   return (
     <div>
@@ -247,6 +247,12 @@ export default function Executive() {
   );
 }
 
+const inr = new Intl.NumberFormat("en-IN", {
+  style: "currency",
+  currency: "INR",
+  maximumFractionDigits: 0,
+});
+
 function fmtMoney(n) {
-  return `$${Math.round(n || 0).toLocaleString()}`;
+  return n ? inr.format(n) : "—";
 }

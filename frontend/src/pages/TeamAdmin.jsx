@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ListChecks, Plus, Search, Trash2, UserPlus, Users } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { KeyRound, ListChecks, Loader2, Plus, Search, Trash2, UserPlus, Users } from "lucide-react";
 import { api } from "../services/api.js";
 import { DEPT_LABEL, PRIORITY_CLS, ROLE_LABEL, STATUS_META } from "../consts/roles.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 import KpiCard from "../components/ui/KpiCard.jsx";
 import Modal from "../components/ui/Modal.jsx";
+import { Toast, useToast } from "../components/ui/Toast.jsx";
 
 const STATUS_KEYS = ["queued", "in_progress", "review", "done"];
 const PRIORITY_KEYS = ["low", "medium", "high"];
@@ -14,7 +16,7 @@ export default function TeamAdmin() {
   const [users, setUsers] = useState([]);
   const [depts, setDepts] = useState([]);
   const [tasks, setTasks] = useState([]);
-  const [toast, setToast] = useState("");
+  const toast = useToast();
   const [busy, setBusy] = useState(false);
 
   const [fDept, setFDept] = useState("all");
@@ -25,6 +27,8 @@ export default function TeamAdmin() {
   const [invite, setInvite] = useState({ name: "", email: "", password: "", role: "teammate", department_id: "" });
   const [taskOpen, setTaskOpen] = useState(false);
   const [taskForm, setTaskForm] = useState({ title: "", description: "", department_id: "", assignee_id: "", priority: "medium", status: "queued", due_date: "" });
+  const [resetTarget, setResetTarget] = useState(null); // user to reset password for
+  const [resetPw, setResetPw] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -33,18 +37,13 @@ export default function TeamAdmin() {
       setDepts(d);
       setTasks(t);
     } catch (err) {
-      setToast(err.message);
+      toast.error(err.message);
     }
-  }, []);
+  }, []); // eslint-disable-line
 
   useEffect(() => {
     load();
   }, [load]);
-
-  const showToast = (m) => {
-    setToast(m);
-    setTimeout(() => setToast(""), 2600);
-  };
 
   const filtered = useMemo(
     () =>
@@ -77,10 +76,10 @@ export default function TeamAdmin() {
       });
       setInviteOpen(false);
       setInvite({ name: "", email: "", password: "", role: "teammate", department_id: "" });
-      showToast("Teammate added to the roster.");
+      toast.success("Teammate added to the roster.");
       load();
     } catch (err) {
-      showToast(err.message);
+      toast.error(err.message);
     } finally {
       setBusy(false);
     }
@@ -89,10 +88,25 @@ export default function TeamAdmin() {
   const patchUser = async (u, patch) => {
     try {
       await api.updateUser(u.id, patch);
-      showToast(`${u.name} updated.`);
+      toast.success(`${u.name} updated.`);
       load();
     } catch (err) {
-      showToast(err.message);
+      toast.error(err.message);
+    }
+  };
+
+  const resetPassword = async () => {
+    if (!resetTarget || !resetPw.trim()) return;
+    setBusy(true);
+    try {
+      await api.updateUser(resetTarget.id, { password: resetPw.trim() });
+      toast.success(`Password reset for ${resetTarget.name}.`);
+      setResetTarget(null);
+      setResetPw("");
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -111,10 +125,10 @@ export default function TeamAdmin() {
       });
       setTaskOpen(false);
       setTaskForm({ title: "", description: "", department_id: "", assignee_id: "", priority: "medium", status: "queued", due_date: "" });
-      showToast("Task created and assigned.");
+      toast.success("Task created and assigned.");
       load();
     } catch (err) {
-      showToast(err.message);
+      toast.error(err.message);
     } finally {
       setBusy(false);
     }
@@ -125,27 +139,27 @@ export default function TeamAdmin() {
       await api.updateTask(t.id, patch);
       load();
     } catch (err) {
-      showToast(err.message);
+      toast.error(err.message);
     }
   };
 
   const completeTask = async (t) => {
     try {
       await api.completeTask(t.id, true);
-      showToast(`"${t.title}" completed.`);
+      toast.success(`"${t.title}" completed.`);
       load();
     } catch (err) {
-      showToast(err.message);
+      toast.error(err.message);
     }
   };
 
   const deleteTask = async (t) => {
     try {
       await api.deleteTask(t.id);
-      showToast("Task deleted.");
+      toast.success("Task deleted.");
       load();
     } catch (err) {
-      showToast(err.message);
+      toast.error(err.message);
     }
   };
 
@@ -178,10 +192,7 @@ export default function TeamAdmin() {
         </div>
       </div>
 
-      {toast && (
-        <div className="rounded-lg border border-neon/40 bg-neon/10 px-4 py-2 text-sm text-neon">{toast}</div>
-      )}
-
+      {/* KPI cards */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard icon={Users} label="Team members" value={users.length} sub="active roster" tone="red" />
         <KpiCard icon={ListChecks} label="Open tasks" value={openTasks} sub="across all departments" />
@@ -241,17 +252,26 @@ export default function TeamAdmin() {
                   </td>
                   <td className="px-4 py-3 text-xs text-zinc-400">{u.openTasks}</td>
                   <td className="px-4 py-3">
-                    <button
-                      onClick={() => patchUser(u, { active: !u.active })}
-                      className={
-                        "rounded border px-2 py-0.5 text-[11px] font-semibold transition-colors " +
-                        (u.active
-                          ? "border-emerald-500/40 text-emerald-400 hover:border-emerald-400"
-                          : "border-zinc-700 text-zinc-500 hover:border-neon/40 hover:text-neon")
-                      }
-                    >
-                      {u.active ? "Active" : "Disabled"}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => patchUser(u, { active: !u.active })}
+                        className={
+                          "rounded border px-2 py-0.5 text-[11px] font-semibold transition-colors " +
+                          (u.active
+                            ? "border-emerald-500/40 text-emerald-400 hover:border-emerald-400"
+                            : "border-zinc-700 text-zinc-500 hover:border-neon/40 hover:text-neon")
+                        }
+                      >
+                        {u.active ? "Active" : "Disabled"}
+                      </button>
+                      <button
+                        onClick={() => { setResetTarget(u); setResetPw(""); }}
+                        className="rounded border border-edge px-2 py-0.5 text-[11px] text-zinc-500 hover:border-neon/40 hover:text-neon transition-colors"
+                        title="Reset password"
+                      >
+                        <KeyRound className="h-3 w-3" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -482,6 +502,41 @@ export default function TeamAdmin() {
           <button type="submit" disabled={busy} className="vos-btn-primary w-full">{busy ? "Creating…" : "Create & assign"}</button>
         </form>
       </Modal>
+
+      {/* Reset password modal */}
+      <Modal open={!!resetTarget} title="Reset Password" onClose={() => setResetTarget(null)}>
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-400">
+            Set a new password for{" "}
+            <span className="font-semibold text-white">{resetTarget?.name}</span>{" "}
+            <span className="text-zinc-600">({resetTarget?.email})</span>
+          </p>
+          <div>
+            <label className="vos-label">New password</label>
+            <input
+              type="password"
+              className="vos-input"
+              placeholder="Minimum 8 characters"
+              minLength={8}
+              value={resetPw}
+              onChange={(e) => setResetPw(e.target.value)}
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setResetTarget(null)} className="vos-btn-ghost">Cancel</button>
+            <button
+              onClick={resetPassword}
+              disabled={busy || resetPw.length < 8}
+              className="vos-btn-primary"
+            >
+              {busy ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : "Reset password"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Toast toasts={toast.toasts} dismiss={toast.dismiss} />
     </div>
   );
 }
