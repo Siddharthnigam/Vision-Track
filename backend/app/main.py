@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+import os
 from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
@@ -65,12 +66,14 @@ async def _lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
     _migrate_leads_schema()
     _backfill_lead_fields()
-    try:
-        from scripts.seed import run as seed_demo
+    # Only auto-seed in local development — never in production
+    if os.getenv("ENVIRONMENT") != "production":
+        try:
+            from scripts.seed import run as seed_demo
 
-        seed_demo()
-    except Exception:
-        pass
+            seed_demo()
+        except Exception:
+            pass
     yield
 
 
@@ -83,8 +86,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=config.settings.ALLOWED_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -914,9 +917,9 @@ def import_sales_file(
 
     file_ref = None
     if file.filename:
-        ext = (file.filename.rsplit(".", 1)[-1] if "." in file.filename else "bin").lower()
-        name = f"{sales_import.timestamp_token()}_{user.id}_{levenshtein_token(file.filename)}"
-        file_ref = _save_upload(name, ext, data)
+        # Store only the original filename as reference — do not write to disk
+        # (Render's filesystem is ephemeral; actual lead data is persisted in the DB)
+        file_ref = file.filename
 
     imp = SalesImport(
         department_id=_sales_dept_id(db),
