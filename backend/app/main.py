@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 import os
 from typing import Optional
@@ -61,16 +62,49 @@ from .schemas import (
 from .services import ai_scheduler, sales_import, security
 
 
+def _bootstrap_cofounder() -> None:
+    """Create the first cofounder account on a fresh database.
+
+    Reads INIT_COFOUNDER_EMAIL, INIT_COFOUNDER_PASSWORD, INIT_COFOUNDER_NAME
+    from environment variables. Runs only when zero users exist — completely
+    safe to leave enabled after first boot (idempotent).
+    """
+    email = os.getenv("INIT_COFOUNDER_EMAIL", "").strip().lower()
+    password = os.getenv("INIT_COFOUNDER_PASSWORD", "").strip()
+    name = os.getenv("INIT_COFOUNDER_NAME", "Cofounder").strip()
+    if not email or not password:
+        return
+    db = SessionLocal()
+    try:
+        count = db.execute(select(func.count(User.id))).scalar_one()
+        if count > 0:
+            return  # users already exist — do nothing
+        user = User(
+            name=name,
+            email=email,
+            password_hash=security.hash_password(password),
+            role="cofounder",
+            active=True,
+        )
+        db.add(user)
+        db.commit()
+        print(f"[bootstrap] Cofounder account created: {email}")
+    except Exception as exc:
+        print(f"[bootstrap] Failed to create cofounder: {exc}")
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
     _migrate_leads_schema()
     _backfill_lead_fields()
+    _bootstrap_cofounder()
     # Only auto-seed in local development — never in production
     if os.getenv("ENVIRONMENT") != "production":
         try:
             from scripts.seed import run as seed_demo
-
             seed_demo()
         except Exception:
             pass
