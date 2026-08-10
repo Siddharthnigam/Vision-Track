@@ -9,10 +9,6 @@
 
   body {
     @apply bg-obsidian text-zinc-300 antialiased;
-    background-image:
-      radial-gradient(ellipse 55% 40% at 75% -10%, rgba(239, 68, 68, 0.06), transparent),
-      radial-gradient(ellipse 45% 35% at 5% 110%, rgba(220, 38, 38, 0.05), transparent);
-    background-attachment: fixed;
   }
 
   ::selection {
@@ -42,7 +38,7 @@
   }
 
   .vos-glow-text {
-    text-shadow: 0 0 12px rgba(239, 68, 68, 0.6);
+    text-shadow: none;
   }
 
   .vos-btn-primary {
