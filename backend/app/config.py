@@ -18,12 +18,14 @@ class Settings:
         self.JWT_ALGORITHM: str = "HS256"
         self.JWT_EXPIRES_MINUTES: int = int(os.getenv("JWT_EXPIRES_MINUTES", "1440"))
         self.PORT: int = int(os.getenv("PORT", "8000"))
+
+        raw_origins = os.getenv(
+            "ALLOWED_ORIGINS",
+            "http://localhost:5173,http://localhost:5174,https://vision-track-mu.vercel.app",
+        )
         self.ALLOWED_ORIGINS: list[str] = [
             origin.strip()
-            for origin in os.getenv(
-                "ALLOWED_ORIGINS",
-                "http://localhost:5173,https://vision-track-mu.vercel.app",
-            ).split(",")
+            for origin in raw_origins.split(",")
             if origin.strip()
         ]
 

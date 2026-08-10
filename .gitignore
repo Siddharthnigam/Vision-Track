@@ -12,6 +12,8 @@ __pycache__/
 backend/.env
 .env
 .env.*
+../SECRETS.txt
+SECRETS.txt
 
 # Databases
 *.db
