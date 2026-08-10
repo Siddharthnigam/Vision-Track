@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 import os
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -91,6 +91,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Explicit preflight handler — guarantees CORS works on all browsers/hosts
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(rest_of_path: str, request: Request):
+    from fastapi.responses import Response as FastAPIResponse
+    origin = request.headers.get("origin", "")
+    allowed = config.settings.ALLOWED_ORIGINS
+    if origin in allowed or "*" in allowed:
+        headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept",
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Max-Age": "600",
+        }
+        return FastAPIResponse(status_code=200, headers=headers)
+    return FastAPIResponse(status_code=403)
 
 
 # ---------------------------------------------------------------- helpers
